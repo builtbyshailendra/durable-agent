@@ -33,3 +33,13 @@ What broke: DBOS 3 no longer lets you construct `Queue(...)` directly. Queues ar
 The third and fourth rows are the lesson: durable execution makes the *workflow* exactly-once, but a step that dies halfway is retried, so any step with an outside effect needs an idempotency key that the other side honours.
 
 What broke: nothing; all six passed on the first run.
+
+### Step 3: operating it
+
+- `api.py`: the operator API (FastAPI). It never runs a workflow; it talks to PostgreSQL through `DBOSClient`, so it can restart or scale apart from the workers. `POST /incidents` (the incident ID becomes the workflow ID, so a repeated alert attaches to the existing run), `GET /incidents`, `GET /incidents/{id}` (status, stage, plan, result), `POST …/approve` and `…/reject` (refused with 409 unless the run is actually waiting), `GET …/steps`, `POST …/fork`.
+- **Queue limit:** runs go through the `remediations` queue with `global_concurrency=2`. Test: four broken services at once, all four resolved, and the fake API saw at most two runs active at a time (and it did see two, so they really ran in parallel).
+- **Fork:** a planner bug (switched on with `PLANNER_BUG=always_restart`) makes the agent restart a service that needed a rollback; the run ends `not_fixed` and pages. With the bug fixed, `POST /incidents/inc-320/fork {"from_step": "make_plan"}` starts a new run that reuses the original triage result (the logs were read once in total) and re-runs planning onwards: rollback, approval, resolved.
+
+The bug is switched by an environment variable so the code, and so DBOS's application version, stays the same. After a real code fix you'd fork onto the new version (`fork_workflow(..., application_version=...)`).
+
+The full suite (15 tests, each with real worker processes and its own database) takes about 2 min 40 s here and leaves no databases or processes behind.
