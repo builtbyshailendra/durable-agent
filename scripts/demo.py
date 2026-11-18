@@ -81,7 +81,7 @@ def main() -> None:
         say("the worker is killed while the run waits for a human")
         worker.kill()
         worker.wait()
-        print("worker exit code:", worker.returncode)
+        print("worker exit code:", worker.returncode, "(1 on Windows: TerminateProcess; 137 on Linux)")
 
         say("a new worker starts")
         spawn("-m", "durable_agent.worker")
@@ -90,9 +90,8 @@ def main() -> None:
 
         say("asha approves the rollback")
         print(httpx.post(f"{API}/incidents/inc-900/approve", json={"by": "asha"}).json())
-        result = wait_stage("inc-900", "done")
+        wait_stage("inc-900", "done")
         print("outcome:", httpx.get(f"{API}/incidents/inc-900").json()["result"]["outcome"])
-        del result
 
         say("what the outside world saw")
         print("actions:", httpx.get(f"{OPS}/actions").json())
