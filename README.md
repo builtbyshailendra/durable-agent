@@ -2,7 +2,67 @@
 
 An incident-remediation agent run that survives crashes. Each run is a [DBOS](https://github.com/dbos-inc/dbos-transact-py) durable workflow on PostgreSQL: kill the worker at any point, start another, and the run carries on from its last finished step, without repeating work it already did.
 
-Status: built step by step, locally. Not published. The "model" is a scripted stand-in, and the infrastructure it fixes is a fake ops API.
+Python 3.12 · DBOS Transact 3.6 · PostgreSQL 16 · FastAPI. Personal learning project, built pairing with Claude Code. The "model" is a scripted stand-in and the infrastructure it fixes is a fake ops API; no real model or cluster is involved.
+
+## What a run does
+
+```mermaid
+flowchart LR
+    A["alert:<br/>POST /incidents"] --> Q[["queue: remediations<br/>2 at a time"]]
+    Q --> T["triage<br/>(status + logs)"] --> P["plan<br/>(the model)"]
+    P -- "low risk: restart" --> X
+    P -- "high risk: rollback" --> W{{"wait for a human<br/>DBOS.recv, up to 1 h"}}
+    W -- approved --> X["execute<br/>idempotency key"]
+    W -- "rejected / no answer" --> E["stop / page"]
+    X --> V["verify<br/>check, durable sleep, repeat"]
+    V -- healthy --> R["resolved"]
+    V -- "still broken" --> E
+```
+
+Every box is a step DBOS records in PostgreSQL. If the worker dies anywhere, a new worker re-runs the workflow function and each finished step returns its recorded result instead of running again.
+
+## What the tests prove
+
+All against real worker processes, each test on its own fresh database:
+
+| Situation | Result |
+|---|---|
+| worker killed between steps | a new worker finishes the run; triage is not repeated (logs read once) |
+| worker killed inside the step that applies the fix, **no** idempotency key | the fix is applied **twice**: steps are at-least-once |
+| the same, **with** an idempotency key | applied once; the retry gets the first reply back |
+| worker killed while waiting for approval | a new worker resumes the wait; the approval still lands |
+| approval sent while **no** worker is running | the message waits in PostgreSQL and is delivered later |
+| the same alert twice | one run (the incident ID is the workflow ID) |
+| four broken services at once | all fixed, never more than two runs active |
+| a planner bug sends the wrong fix | after the fix, the run is forked from its planning step: triage reused, the right fix applied |
+
+## Try it
+
+```bash
+python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # or: uv pip install
+python scripts/demo.py     # fake ops API, worker, operator API; kills the worker mid-run
+python -m pytest           # 15 tests, about 2.5 minutes; needs PostgreSQL (TEST_PG, default 127.0.0.1:5433)
+```
+
+`scripts/demo.py` output, abridged (run on this laptop):
+
+```text
+> an alert opens incident inc-900
+plan: {'action': 'rollback', 'to_version': 'v41', 'risk': 'high', ...}
+> the worker is killed while the run waits for a human
+> a new worker starts
+stage: awaiting_approval
+> asha approves the rollback
+outcome: resolved
+actions: [{'n': 1, 'kind': 'rollback', ..., 'idempotency_key': 'inc-900:execute'}]
+```
+
+## Durable execution, and what it doesn't do
+
+- **Exactly-once workflow, at-least-once steps.** A finished step never runs again. A step that was *running* when the process died runs again. So every step with an outside effect sends an idempotency key, and the other side must honour it. The fake ops API does; a real API might not.
+- **The workflow function must be deterministic.** It's re-run from the top on recovery. Anything that varies (time, randomness, network, a model) belongs in a step, whose result is recorded.
+- **Changing code under running workflows** is a versioning problem. DBOS tags runs with an application version and recovers each on a matching version; forking onto a new version is the escape hatch.
+- **Alternatives:** Temporal (a separate cluster, more features, more to run), AWS Step Functions (managed, JSON state machines), queue + cron + retries (what most teams have, which is where "did that restart happen twice?" bugs come from). DBOS keeps the state in the PostgreSQL you already run, as a library.
 
 ## Build log
 
@@ -43,3 +103,9 @@ What broke: nothing; all six passed on the first run.
 The bug is switched by an environment variable so the code, and so DBOS's application version, stays the same. After a real code fix you'd fork onto the new version (`fork_workflow(..., application_version=...)`).
 
 The full suite (15 tests, each with real worker processes and its own database) takes about 2 min 40 s here and leaves no databases or processes behind.
+
+### Step 4: demo script and docs
+
+`scripts/demo.py` runs the fake ops API, a worker and the operator API as separate processes on ports 8095–8096, breaks a service, opens an incident, kills the worker while the run waits for approval, starts a new worker, approves, and prints the outcome, what the outside world saw, and the run's recorded steps. On Windows a killed process exits with code 1 (TerminateProcess), not 137. Then this README and `LEARN.md`.
+
+Where it stands: 4 local commits, 15 tests passing, demo verified on this laptop. Not published; no real model calls.
