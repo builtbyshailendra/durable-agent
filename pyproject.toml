@@ -1,0 +1,20 @@
+[project]
+name = "durable-agent"
+version = "0.1.0"
+description = "An incident-remediation agent run that survives crashes: DBOS durable workflows on PostgreSQL"
+requires-python = ">=3.12"
+dependencies = [
+  "dbos==3.6.0",
+  "psycopg[binary]>=3.2",
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
