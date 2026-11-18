@@ -16,3 +16,20 @@ Status: built step by step, locally. Not published. The "model" is a scripted st
 Tests run against **real worker processes** and a fresh PostgreSQL database each (the local test cluster on port 5433): a low-risk fix with no approval, a rollback that waits for a human, a rejected fix, nobody answering (pages after the timeout), the same incident ID enqueued twice (one run, logs read once), and a healthy service.
 
 What broke: DBOS 3 no longer lets you construct `Queue(...)` directly. Queues are stored in the system database now, registered with `DBOS.register_queue` after `DBOS.launch()`.
+
+### Step 2: crashes
+
+`CRASH_AT` makes the worker exit with `os._exit(137)` at a named point: no cleanup, no `finally`, the same as `kill -9` or a node dying. A new worker process then starts on the same database.
+
+| Crash | What the test proves |
+|---|---|
+| between triage and planning | the new worker finishes the run, and triage is **not** repeated (the fake API saw the logs read exactly once) |
+| inside the execute step, after the API call, **no idempotency key** | the restart is applied **twice**. A step that was running when the process died runs again: steps are at-least-once |
+| the same, **with** an idempotency key (`<run id>:execute`) | applied once; the retry gets the first reply back, marked `replayed` |
+| right after the execute step finished | applied once even without a key: a finished step never runs again |
+| while waiting for approval (worker killed) | a new worker picks up the wait; the approval is accepted and the run finishes |
+| approval sent while no worker is running at all | the message waits in PostgreSQL and is delivered when a worker starts |
+
+The third and fourth rows are the lesson: durable execution makes the *workflow* exactly-once, but a step that dies halfway is retried, so any step with an outside effect needs an idempotency key that the other side honours.
+
+What broke: nothing; all six passed on the first run.
