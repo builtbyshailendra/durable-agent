@@ -1,5 +1,7 @@
 # durable-agent
 
+[![ci](https://github.com/builtbyshailendra/durable-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/builtbyshailendra/durable-agent/actions/workflows/ci.yml)
+
 An incident-remediation agent run that survives crashes. Each run is a [DBOS](https://github.com/dbos-inc/dbos-transact-py) durable workflow on PostgreSQL: kill the worker at any point, start another, and the run carries on from its last finished step, without repeating work it already did.
 
 Python 3.12 · DBOS Transact 3.6 · PostgreSQL 16 · FastAPI. Personal learning project, built pairing with Claude Code. The "model" is a scripted stand-in and the infrastructure it fixes is a fake ops API; no real model or cluster is involved.
@@ -108,4 +110,4 @@ The full suite (15 tests, each with real worker processes and its own database) 
 
 `scripts/demo.py` runs the fake ops API, a worker and the operator API as separate processes on ports 8095–8096, breaks a service, opens an incident, kills the worker while the run waits for approval, starts a new worker, approves, and prints the outcome, what the outside world saw, and the run's recorded steps. On Windows a killed process exits with code 1 (TerminateProcess), not 137. Then this README and `LEARN.md`.
 
-Where it stands: 4 local commits, 15 tests passing, demo verified on this laptop. Not published; no real model calls.
+Where it stands: 15 tests passing and the demo running, on the laptop and in CI (badge above). Published 20 Nov 2026; no real model calls.
